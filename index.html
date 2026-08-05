@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sistem Absensi Guru Berbasis Geofencing</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <main class="content">
+      <section class="page-section" id="loginSection">
+        <div class="card card-login">
+          <h1>Masuk ke Aplikasi</h1>
+          <p class="login-subtitle">Gunakan akun guru atau admin untuk mencoba semua fitur.</p>
+          <form id="loginForm">
+            <div class="field-group">
+              <label>Username</label>
+              <input type="text" id="loginUsername" placeholder="siti atau admin" required />
+            </div>
+            <div class="field-group">
+              <label>Password</label>
+              <input type="password" id="loginPassword" placeholder="••••••••" required />
+            </div>
+            <button class="primary-button" type="submit">Masuk</button>
+          </form>
+          <p class="login-note">Akun guru: <strong>siti / guru123</strong> | Akun admin: <strong>admin / admin123</strong></p>
+        </div>
+      </section>
+
+      <section class="page-section hidden" id="home">
+        <div class="card card-home">
+          <div class="home-header">
+            <div>
+              <p class="micro-label">Selamat datang,</p>
+              <p class="home-name" id="homeName">Guru</p>
+              <p class="home-school" id="homeSchool">Taman Main Darussalam</p>
+            </div>
+            <div class="home-header-right">
+              <div class="home-avatar" id="homeAvatar">GR</div>
+              <button class="secondary-button" id="logoutButton">Logout</button>
+            </div>
+          </div>
+
+          <div class="home-nav-row">
+            <button class="nav-link active teacher-only" data-section="home">Beranda</button>
+            <button class="nav-link teacher-only" data-section="form">Izin / sakit</button>
+            <button class="nav-link teacher-only" data-section="history">Riwayat</button>
+            <button class="nav-link admin-only hidden" data-section="monitoring">Monitoring</button>
+          </div>
+
+          <div class="home-status-card teacher-only" id="attendanceCard">
+            <div class="attendance-location">
+              <span class="location-icon">📍</span>
+              <div>
+                <p class="location-label">Di dalam area sekolah</p>
+                <p class="location-distance">120 m dari gerbang</p>
+              </div>
+            </div>
+
+            <div class="attendance-status">
+              <p class="status-label" id="attendanceLabel">Belum absen masuk</p>
+              <p class="status-time" id="attendanceTime">--:--</p>
+            </div>
+
+            <div class="attendance-actions">
+              <button class="attendance-action attendance-action--in" id="checkInButton">
+                <span class="attendance-action-icon">➤</span>
+                <span>Absen Masuk</span>
+              </button>
+              <button class="attendance-action attendance-action--out" id="checkOutButton">
+                <span class="attendance-action-icon">⏱️</span>
+                <span>Absen Pulang</span>
+              </button>
+            </div>
+
+            <div class="attendance-meta">
+              <p class="attendance-clock" id="homeClock">Senin, 4 Agustus 2026 · 08:20:00 WIB</p>
+            </div>
+
+            <div class="attendance-summary-grid">
+              <div class="attendance-summary-card">
+                <p>Masuk</p>
+                <strong id="attendanceInSummary">Belum absen</strong>
+              </div>
+              <div class="attendance-summary-card">
+                <p>Pulang</p>
+                <strong id="attendanceOutSummary">--:--</strong>
+              </div>
+            </div>
+          </div>
+
+          <div class="home-status-card admin-only hidden" id="adminSummaryCard">
+            <div>
+              <p class="status-label">Monitoring hari ini</p>
+              <p class="status-time" id="adminSummaryText">Memuat...</p>
+            </div>
+            <div class="status-arrow">›</div>
+          </div>
+
+          <div class="home-menu-label">Menu</div>
+          <div class="home-menu-grid">
+            <button class="home-menu-card teacher-only" data-section="home">
+              <span class="home-menu-icon">⌾</span>
+              <span>Absen</span>
+            </button>
+            <button class="home-menu-card teacher-only" data-section="form">
+              <span class="home-menu-icon">📄</span>
+              <span>Izin / sakit</span>
+            </button>
+            <button class="home-menu-card teacher-only" data-section="history">
+              <span class="home-menu-icon">🗓️</span>
+              <span>Riwayat</span>
+            </button>
+            <button class="home-menu-card admin-only hidden" data-section="monitoring">
+              <span class="home-menu-icon">📊</span>
+              <span>Monitoring</span>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section class="page-section hidden" id="form">
+        <div class="card card-form">
+          <div class="card-header">
+            <button class="back-button" type="button" id="backFromForm">←</button>
+            <h1>Ajukan izin / sakit</h1>
+          </div>
+
+          <form id="leaveForm">
+            <div class="field-group">
+              <label>Jenis pengajuan</label>
+              <div class="button-row" id="leaveTypeRow">
+                <button type="button" class="pill selected" data-type="sakit">Sakit</button>
+                <button type="button" class="pill" data-type="izin">Izin</button>
+                <button type="button" class="pill" data-type="cuti">Cuti</button>
+              </div>
+            </div>
+
+            <div class="field-group">
+              <label>Tanggal</label>
+              <input type="date" id="leaveDate" required />
+            </div>
+
+            <div class="field-group">
+              <label>Alasan</label>
+              <textarea id="leaveReason" rows="4" placeholder="Demam sejak semalam, sudah periksa ke dokter" required></textarea>
+            </div>
+
+            <div class="field-group">
+              <label>Lampiran</label>
+              <input type="file" id="leaveAttachment" accept="image/*,.pdf" />
+            </div>
+
+            <button class="primary-button" type="submit">Kirim pengajuan</button>
+          </form>
+        </div>
+      </section>
+
+      <section class="page-section hidden" id="history">
+        <div class="card card-history">
+          <div class="card-header">
+            <button class="back-button" type="button" id="backFromHistory" aria-label="Kembali ke beranda">←</button>
+            <h2>Riwayat absensi</h2>
+          </div>
+          <div class="history-block">
+            <div class="history-summary-grid">
+              <div class="summary-pill success"><span id="historyPresent">0</span><small>Hadir</small></div>
+              <div class="summary-pill warning"><span id="historyLate">0</span><small>Terlambat</small></div>
+              <div class="summary-pill accent"><span id="historyLeave">0</span><small>Izin/Sakit</small></div>
+              <div class="summary-pill danger"><span id="historyAbsent">0</span><small>Belum absen</small></div>
+            </div>
+
+            <div class="history-list" id="historyList"></div>
+          </div>
+
+          <h2 class="section-title">Riwayat pengajuan</h2>
+          <div class="leave-list" id="leaveList"></div>
+        </div>
+      </section>
+
+      <section class="page-section hidden" id="monitoring">
+        <div class="card card-monitoring">
+          <div class="card-header">
+            <button class="back-button" type="button" id="backFromMonitoring" aria-label="Kembali ke beranda">←</button>
+            <h2>Monitoring kehadiran</h2>
+            <button class="secondary-button" id="exportButton">Export Excel</button>
+          </div>
+
+          <div class="metric-grid">
+            <div class="metric-card success">
+              <span>Hadir</span>
+              <strong id="monitorPresent">0</strong>
+            </div>
+            <div class="metric-card warning">
+              <span>Terlambat</span>
+              <strong id="monitorLate">0</strong>
+            </div>
+            <div class="metric-card accent">
+              <span>Izin / sakit</span>
+              <strong id="monitorLeave">0</strong>
+            </div>
+            <div class="metric-card danger">
+              <span>Belum absen</span>
+              <strong id="monitorAbsent">0</strong>
+            </div>
+          </div>
+
+          <div class="admin-settings-card">
+            <h3>Jam masuk standar</h3>
+            <div class="settings-row">
+              <input type="time" id="adminTimeStandardInput" />
+              <button class="secondary-button" id="saveStandardButton">Simpan</button>
+            </div>
+            <p class="settings-note">Jam masuk standar akan mempengaruhi status Hadir / Terlambat.</p>
+          </div>
+
+          <div class="table-card">
+            <table>
+              <thead>
+                <tr>
+                  <th>Guru</th>
+                  <th>Masuk</th>
+                  <th>Pulang</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="adminTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script type="module" src="script.js"></script>
+</body>
+</html>
