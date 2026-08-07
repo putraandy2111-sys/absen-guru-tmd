@@ -44,8 +44,6 @@ button {
 }
 
 .app-shell {
-  display: grid;
-  grid-template-columns: 280px 1fr;
   min-height: 100vh;
 }
 
@@ -109,11 +107,15 @@ button {
 }
 
 .content {
-  padding: 36px;
+  padding: 36px clamp(18px, 3vw, 36px);
+  max-width: 1120px;
+  margin: 0 auto;
 }
 
 .page-section {
   max-width: 900px;
+  width: 100%;
+  margin: 0 auto;
 }
 
 .hidden {
@@ -266,7 +268,8 @@ textarea {
 }
 
 .card-home {
-  max-width: 420px;
+  max-width: 520px;
+  margin: 0 auto;
 }
 
 .home-header {
@@ -276,6 +279,7 @@ textarea {
   gap: 16px;
   padding-bottom: 18px;
   border-bottom: 1px solid rgba(31, 41, 55, 0.08);
+  flex-wrap: wrap;
 }
 
 .micro-label {
@@ -387,8 +391,8 @@ textarea {
 }
 
 .attendance-action {
-  width: 150px;
-  height: 150px;
+  width: min(100%, 150px);
+  aspect-ratio: 1;
   border-radius: 50%;
   border: none;
   display: grid;
@@ -753,39 +757,82 @@ tbody tr:last-child {
 }
 
 @media (max-width: 960px) {
-  .app-shell {
+  .content {
+    padding: 24px 20px;
+  }
+
+  .card {
+    padding: 20px;
+  }
+
+  .home-header,
+  .attendance-meta,
+  .home-nav-row {
+    flex-wrap: wrap;
+  }
+
+  .history-summary-grid,
+  .metric-grid,
+  .button-row,
+  .status-grid,
+  .home-menu-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .attendance-actions {
     grid-template-columns: 1fr;
   }
 
-  .sidebar {
-    border-right: none;
-    border-bottom: 1px solid rgba(31, 41, 55, 0.08);
-  }
-
-  .content {
-    padding: 24px;
-  }
-
-  .metric-grid,
-  .button-row,
-  .status-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .attendance-action {
+    width: min(100%, 180px);
   }
 }
 
 @media (max-width: 640px) {
-  .sidebar {
-    padding: 20px;
+  body {
+    background: var(--surface-2);
   }
 
-  .card,
   .content {
-    padding: 18px;
+    padding: 16px;
   }
 
+  .card {
+    padding: 18px;
+    border-radius: 22px;
+  }
+
+  .card-header {
+    flex-wrap: wrap;
+  }
+
+  .home-header-right {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .history-summary-grid,
   .metric-grid,
   .button-row,
-  .status-grid {
+  .status-grid,
+  .home-menu-grid,
+  .attendance-summary-grid {
     grid-template-columns: 1fr;
+  }
+
+  .attendance-action {
+    width: 100%;
+    max-width: 220px;
+    height: auto;
+    aspect-ratio: 1;
+  }
+
+  .settings-row {
+    flex-direction: column;
+  }
+
+  table {
+    min-width: 100%;
+    font-size: 14px;
   }
 }

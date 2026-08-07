@@ -2,7 +2,8 @@ const appState = {
   user: null,
   today: null,
   leaveType: 'sakit',
-  jamMasukStandar: '08:30'
+  jamMasukStandar: '08:30',
+  supabaseConfig: null
 };
 
 const logoutButton = document.getElementById('logoutButton');
@@ -38,6 +39,9 @@ const monitorLate = document.getElementById('monitorLate');
 const monitorLeave = document.getElementById('monitorLeave');
 const monitorAbsent = document.getElementById('monitorAbsent');
 const exportButton = document.getElementById('exportButton');
+const rekapStartDate = document.getElementById('rekapStartDate');
+const rekapEndDate = document.getElementById('rekapEndDate');
+const rekapExportButton = document.getElementById('rekapExportButton');
 const adminTimeStandardInput = document.getElementById('adminTimeStandardInput');
 const saveStandardButton = document.getElementById('saveStandardButton');
 const homeClock = document.getElementById('homeClock');
@@ -145,12 +149,36 @@ async function api(path, options = {}) {
   return data;
 }
 
+async function loadSupabaseConfig() {
+  try {
+    const config = await api('/api/config');
+    appState.supabaseConfig = config;
+  } catch (error) {
+    console.warn('Supabase config unavailable:', error);
+  }
+}
+
 async function initializeAuth() {
+  await loadSupabaseConfig();
+
+  try {
+    const storedUser = localStorage.getItem('currentUser');
+    if (storedUser) {
+      const parsedUser = JSON.parse(storedUser);
+      loginUser(parsedUser);
+      return;
+    }
+  } catch (error) {
+    console.warn('Gagal memuat sesi tersimpan:', error);
+    localStorage.removeItem('currentUser');
+  }
+
   showSection('loginSection');
 }
 
 function loginUser(user) {
   appState.user = user;
+  localStorage.setItem('currentUser', JSON.stringify(user));
   logoutButton?.classList.remove('hidden');
   setRoleUI();
   showSection('home');
@@ -159,6 +187,7 @@ function loginUser(user) {
 
 async function logout() {
   appState.user = null;
+  localStorage.removeItem('currentUser');
   logoutButton?.classList.add('hidden');
   showSection('loginSection');
 }
@@ -202,7 +231,7 @@ async function loadHome() {
     .join('')
     .toUpperCase();
 
-  if (appState.user.role === 'teacher') {
+  if (appState.user.role === 'teacher' || isAdminUser()) {
     setVisible(checkInButton, true);
     setVisible(checkOutButton, true);
     checkInButton.disabled = false;
@@ -215,7 +244,7 @@ async function loadHome() {
 
   if (isAdminUser()) {
     adminSummaryText.textContent = 'Memuat data...';
-    loadMonitoring();
+    loadMonitoring().catch((error) => console.error(error));
     loadAdminSettings();
   }
 }
@@ -258,7 +287,7 @@ async function loadHistory() {
           <div class="history-item">
             <div>
               <p class="history-title">${record.date}</p>
-              <p class="history-subtitle">Masuk ${record.checkIn || '--:--'} · Pulang ${record.checkOut || '--:--'}</p>
+              <p class="history-subtitle">Masuk ${record.checkIn || '--:--'} ï¿½ Pulang ${record.checkOut || '--:--'}</p>
             </div>
             <span class="status-badge ${status === 'Hadir' ? 'success' : 'warning'}">${status}</span>
           </div>
@@ -280,7 +309,7 @@ async function loadLeaves() {
       .map((leave) => `
         <div class="leave-item">
           <div>
-            <p class="history-title">${leave.date} · ${leave.type}</p>
+            <p class="history-title">${leave.date} ï¿½ ${leave.type}</p>
             <p class="history-subtitle">${leave.reason || '-'}</p>
           </div>
           <span class="status-badge accent">${leave.status}</span>
@@ -335,7 +364,7 @@ function updateLiveClock() {
   const dateString = now.toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
   const timeString = now.toLocaleTimeString('id-ID', { hour12: false });
   if (homeClock) {
-    homeClock.textContent = `${dateString} · ${timeString} WIB`;
+    homeClock.textContent = `${dateString} \u00B7 ${timeString} WIB`;
   }
 }
 
@@ -385,6 +414,7 @@ loginForm.addEventListener('submit', async (event) => {
 });
 
 checkInButton.addEventListener('click', async () => {
+  checkInButton.disabled = true;
   try {
     await api('/api/attendance/checkin', {
       method: 'POST',
@@ -393,11 +423,13 @@ checkInButton.addEventListener('click', async () => {
     await loadHome();
   } catch (error) {
     console.error(error);
-    alert('Gagal absen masuk.');
+    alert(error.message || 'Gagal absen masuk.');
+    checkInButton.disabled = false;
   }
 });
 
 checkOutButton.addEventListener('click', async () => {
+  checkOutButton.disabled = true;
   try {
     await api('/api/attendance/checkout', {
       method: 'POST',
@@ -406,7 +438,8 @@ checkOutButton.addEventListener('click', async () => {
     await loadHome();
   } catch (error) {
     console.error(error);
-    alert('Gagal absen pulang.');
+    alert(error.message || 'Gagal absen pulang.');
+    checkOutButton.disabled = false;
   }
 });
 
@@ -474,6 +507,20 @@ backFromHistory?.addEventListener('click', () => {
 backFromMonitoring?.addEventListener('click', () => {
   showSection('home');
   loadHome();
+});
+
+rekapExportButton?.addEventListener('click', () => {
+  const start = rekapStartDate.value;
+  const end = rekapEndDate.value;
+  if (!start || !end) {
+    alert('Pilih tanggal mulai dan tanggal akhir dulu.');
+    return;
+  }
+  if (start > end) {
+    alert('Tanggal mulai tidak boleh lebih besar dari tanggal akhir.');
+    return;
+  }
+  window.location.href = `/api/export/rekap?startDate=${encodeURIComponent(start)}&endDate=${encodeURIComponent(end)}`;
 });
 
 showSection('loginSection');
