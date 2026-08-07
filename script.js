@@ -523,4 +523,9 @@ rekapExportButton?.addEventListener('click', () => {
   window.location.href = `/api/export/rekap?startDate=${encodeURIComponent(start)}&endDate=${encodeURIComponent(end)}`;
 });
 
+exportButton?.addEventListener('click', () => {
+  const date = getToday();
+  window.location.href = `/api/export?date=${encodeURIComponent(date)}`;
+});
+
 showSection('loginSection');
