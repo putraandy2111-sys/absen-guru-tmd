@@ -56,11 +56,16 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.static(__dirname));
 app.use('/uploads', express.static(UPLOAD_DIR));
 
-function getToday() {
+function getJakartaDate() {
   const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
+  return new Date(now.getTime() + 7 * 60 * 60 * 1000);
+}
+
+function getToday() {
+  const jakartaNow = getJakartaDate();
+  const year = jakartaNow.getUTCFullYear();
+  const month = String(jakartaNow.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(jakartaNow.getUTCDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
 }
 
@@ -285,8 +290,8 @@ app.post('/api/attendance/checkin', async (req, res) => {
       return res.status(400).json({ message: 'Anda sudah absen masuk hari ini.' });
     }
 
-    const now = new Date();
-    const checkIn = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    const jakartaNow = getJakartaDate();
+    const checkIn = `${String(jakartaNow.getUTCHours()).padStart(2, '0')}:${String(jakartaNow.getUTCMinutes()).padStart(2, '0')}`;
     const insertedRows = await supabaseRequest('attendance', {
       method: 'POST',
       body: [{
@@ -332,8 +337,8 @@ app.post('/api/attendance/checkout', async (req, res) => {
       return res.status(400).json({ message: 'Anda sudah absen pulang hari ini.' });
     }
 
-    const now = new Date();
-    const checkOut = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    const jakartaNow = getJakartaDate();
+    const checkOut = `${String(jakartaNow.getUTCHours()).padStart(2, '0')}:${String(jakartaNow.getUTCMinutes()).padStart(2, '0')}`;
     const updatedRows = await supabaseRequest('attendance', {
       method: 'PATCH',
       query: {
