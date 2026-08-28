@@ -12,6 +12,66 @@ const appState = {
   supabaseConfig: null
 };
 
+// Storage helper untuk menangani localStorage yang tidak tersedia
+const StorageHelper = (() => {
+  let memoryStorage = {};
+  let isLocalStorageAvailable = false;
+
+  // Cek apakah localStorage tersedia
+  const checkLocalStorage = () => {
+    try {
+      const test = '__localStorage_test__';
+      localStorage.setItem(test, test);
+      localStorage.removeItem(test);
+      return true;
+    } catch (e) {
+      console.warn('localStorage tidak tersedia, menggunakan in-memory storage:', e.message);
+      return false;
+    }
+  };
+
+  isLocalStorageAvailable = checkLocalStorage();
+
+  return {
+    setItem: (key, value) => {
+      try {
+        if (isLocalStorageAvailable) {
+          localStorage.setItem(key, value);
+        } else {
+          memoryStorage[key] = value;
+        }
+      } catch (error) {
+        console.warn(`Gagal menyimpan data ke storage (${key}):`, error);
+        memoryStorage[key] = value; // Fallback ke memory
+      }
+    },
+
+    getItem: (key) => {
+      try {
+        if (isLocalStorageAvailable) {
+          return localStorage.getItem(key);
+        }
+        return memoryStorage[key] || null;
+      } catch (error) {
+        console.warn(`Gagal membaca data dari storage (${key}):`, error);
+        return memoryStorage[key] || null; // Fallback ke memory
+      }
+    },
+
+    removeItem: (key) => {
+      try {
+        if (isLocalStorageAvailable) {
+          localStorage.removeItem(key);
+        }
+        delete memoryStorage[key];
+      } catch (error) {
+        console.warn(`Gagal menghapus data dari storage (${key}):`, error);
+        delete memoryStorage[key]; // Fallback ke memory
+      }
+    }
+  };
+})();
+
 const logoutButton = document.getElementById('logoutButton');
 const navLinks = Array.from(document.querySelectorAll('.nav-link'));
 const sections = Array.from(document.querySelectorAll('.page-section'));
@@ -168,7 +228,7 @@ async function initializeAuth() {
   await loadSupabaseConfig();
 
   try {
-    const storedUser = localStorage.getItem('currentUser');
+    const storedUser = StorageHelper.getItem('currentUser');
     if (storedUser) {
       const parsedUser = JSON.parse(storedUser);
       loginUser(parsedUser);
@@ -176,7 +236,7 @@ async function initializeAuth() {
     }
   } catch (error) {
     console.warn('Gagal memuat sesi tersimpan:', error);
-    localStorage.removeItem('currentUser');
+    StorageHelper.removeItem('currentUser');
   }
 
   showSection('loginSection');
@@ -184,7 +244,7 @@ async function initializeAuth() {
 
 function loginUser(user) {
   appState.user = user;
-  localStorage.setItem('currentUser', JSON.stringify(user));
+  StorageHelper.setItem('currentUser', JSON.stringify(user));
   logoutButton?.classList.remove('hidden');
   setRoleUI();
   showSection('home');
@@ -193,7 +253,7 @@ function loginUser(user) {
 
 async function logout() {
   appState.user = null;
-  localStorage.removeItem('currentUser');
+  StorageHelper.removeItem('currentUser');
   logoutButton?.classList.add('hidden');
   showSection('loginSection');
 }
@@ -329,6 +389,8 @@ async function loadLeaves() {
 
 async function loadMonitoring() {
   const date = getToday();
+  if (rekapStartDate) rekapStartDate.value = date;
+  if (rekapEndDate) rekapEndDate.value = date;
   try {
     const data = await api(`/api/admin/monitoring?date=${encodeURIComponent(date)}`);
     const summary = data.summary || {};
@@ -527,11 +589,6 @@ rekapExportButton?.addEventListener('click', () => {
     return;
   }
   window.location.href = `/api/export/rekap?startDate=${encodeURIComponent(start)}&endDate=${encodeURIComponent(end)}`;
-});
-
-exportButton?.addEventListener('click', () => {
-  const date = getToday();
-  window.location.href = `/api/export?date=${encodeURIComponent(date)}`;
 });
 
 showSection('loginSection');

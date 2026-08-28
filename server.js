@@ -80,6 +80,16 @@ function countWorkdays(startDate, endDate) {
   return count;
 }
 
+function isWeekday(dateString) {
+  try {
+    const d = new Date(dateString + 'T00:00:00');
+    const day = d.getDay();
+    return day !== 0 && day !== 6;
+  } catch (err) {
+    return false;
+  }
+}
+
 function getAttendanceStatus(checkIn, jamMasukStandar = '08:30') {
   if (!checkIn) return 'Belum absen';
   const [inHour, inMinute] = checkIn.split(':').map(Number);
@@ -192,13 +202,15 @@ async function getJamMasukStandar() {
   try {
     const rows = await supabaseRequest('settings', {
       query: {
-        id: 'eq.1',
-        select: 'jam_masuk_standar'
+        key: `eq.jamMasukStandar`,
+        select: 'value'
       }
     });
     const settingsRow = Array.isArray(rows) ? rows[0] : rows;
-    return settingsRow?.jam_masuk_standar || '08:30';
+    // Jika baris ditemukan, kembalikan value; jika tidak ditemukan, fallback ke '08:30'
+    return settingsRow?.value || '08:30';
   } catch (error) {
+    // Jika ada error jaringan atau Supabase, fallback ke '08:30'
     return '08:30';
   }
 }
@@ -485,60 +497,6 @@ app.get('/api/admin/monitoring', async (req, res) => {
   }
 });
 
-app.get('/api/export', async (req, res) => {
-  const date = req.query.date || getToday();
-
-  try {
-    const jamMasukStandar = await getJamMasukStandar();
-    const teacherRows = await supabaseRequest('users', {
-      query: {
-        role: 'eq.teacher',
-        select: 'id,name,role,username,school'
-      }
-    });
-    const teachers = (Array.isArray(teacherRows) ? teacherRows : []).map(mapProfileRecord);
-    const attendanceRows = await supabaseRequest('attendance', {
-      query: {
-        date: `eq.${date}`,
-        select: 'id,user_id,date,check_in,check_out'
-      }
-    });
-    const attendances = (Array.isArray(attendanceRows) ? attendanceRows : []).map(mapAttendanceRecord);
-    const leaveRows = await supabaseRequest('leaves', {
-      query: {
-        date: `eq.${date}`,
-        select: 'id,user_id,type,date,reason,attachment,status,submitted_at'
-      }
-    });
-    const leaves = (Array.isArray(leaveRows) ? leaveRows : []).map(mapLeaveRecord);
-
-    const workbook = new ExcelJS.Workbook();
-    const sheet = workbook.addWorksheet('Monitoring');
-    sheet.columns = [
-      { header: 'Guru', key: 'guru', width: 28 },
-      { header: 'Masuk', key: 'masuk', width: 15 },
-      { header: 'Pulang', key: 'pulang', width: 15 },
-      { header: 'Status', key: 'status', width: 18 }
-    ];
-    teachers.forEach((teacher) => {
-      const record = attendances.find((item) => item.userId === teacher.id);
-      const leave = leaves.find((item) => item.userId === teacher.id);
-      if (leave) {
-        sheet.addRow({ guru: teacher.name, masuk: '--:--', pulang: '--:--', status: leave.type === 'sakit' ? 'Sakit' : 'Izin' });
-      } else if (record) {
-        sheet.addRow({ guru: teacher.name, masuk: record.checkIn || '--:--', pulang: record.checkOut || '--:--', status: getAttendanceStatus(record.checkIn, jamMasukStandar) });
-      } else {
-        sheet.addRow({ guru: teacher.name, masuk: '--:--', pulang: '--:--', status: 'Belum absen' });
-      }
-    });
-    const buffer = await workbook.xlsx.writeBuffer();
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename=monitoring-${date}.xlsx`);
-    res.send(buffer);
-  } catch (error) {
-    return res.status(error.statusCode || 500).json({ message: error.message || 'Gagal mengekspor data.' });
-  }
-});
 
 app.get('/api/export/rekap', async (req, res) => {
   const { startDate, endDate } = req.query;
@@ -561,6 +519,8 @@ app.get('/api/export/rekap', async (req, res) => {
       }
     });
     const attendances = (Array.isArray(attendanceRows) ? attendanceRows : []).map(mapAttendanceRecord);
+    // Hanya pertimbangkan attendance pada hari kerja (Senin-Jumat)
+    const attendancesWeekday = attendances.filter((a) => isWeekday(a.date));
 
     const leaveRows = await supabaseRequest('leaves', {
       query: {
@@ -595,7 +555,7 @@ app.get('/api/export/rekap', async (req, res) => {
     ];
 
     teachers.forEach((teacher) => {
-      const teacherAttendance = attendances.filter((a) => a.userId === teacher.id);
+      const teacherAttendance = attendancesWeekday.filter((a) => a.userId === teacher.id);
       const teacherLeaves = leaves.filter((l) => l.userId === teacher.id);
 
       const hadir = teacherAttendance.filter((a) => getAttendanceStatus(a.checkIn, jamMasukStandar) === 'Hadir').length;
@@ -606,6 +566,8 @@ app.get('/api/export/rekap', async (req, res) => {
 
       summarySheet.addRow({ guru: teacher.name, hariKerja, hadir, terlambat, izin, sakit, mangkir });
 
+      // Untuk sheet Detail, jangan sertakan baris pada weekend
+      const teacherLeavesForDetail = teacherLeaves.filter((l) => isWeekday(l.date));
       const combinedRecords = [
         ...teacherAttendance.map((a) => ({
           date: a.date,
@@ -613,7 +575,7 @@ app.get('/api/export/rekap', async (req, res) => {
           pulang: a.checkOut || '--:--',
           status: getAttendanceStatus(a.checkIn, jamMasukStandar)
         })),
-        ...teacherLeaves.map((l) => ({
+        ...teacherLeavesForDetail.map((l) => ({
           date: l.date,
           masuk: '--:--',
           pulang: '--:--',
@@ -651,29 +613,32 @@ app.post('/api/admin/settings', async (req, res) => {
   }
 
   try {
+    // Periksa apakah entry dengan key 'jamMasukStandar' sudah ada
     const existingRows = await supabaseRequest('settings', {
       query: {
-        id: 'eq.1',
-        select: 'id'
+        key: `eq.jamMasukStandar`,
+        select: 'key,value'
       }
     });
     const existing = Array.isArray(existingRows) ? existingRows[0] : existingRows;
     if (existing) {
+      // PATCH value
       await supabaseRequest('settings', {
         method: 'PATCH',
         query: {
-          id: 'eq.1'
+          key: `eq.jamMasukStandar`
         },
         body: {
-          jam_masuk_standar: jamMasukStandar
+          value: jamMasukStandar
         }
       });
     } else {
+      // INSERT new key/value row
       await supabaseRequest('settings', {
         method: 'POST',
         body: [{
-          id: 1,
-          jam_masuk_standar: jamMasukStandar
+          key: 'jamMasukStandar',
+          value: jamMasukStandar
         }]
       });
     }
