@@ -51,6 +51,21 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage });
 
+const SCHOOL_LOCATION = {
+  lat: -6.4012717,
+  lng: 106.8089054
+};
+
+function getDistanceMeters(lat1, lng1, lat2, lng2) {
+  const earthRadius = 6371000;
+  const toRadians = (degrees) => degrees * (Math.PI / 180);
+  const deltaLat = toRadians(lat2 - lat1);
+  const deltaLng = toRadians(lng2 - lng1);
+  const a = Math.sin(deltaLat / 2) ** 2
+    + Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) * Math.sin(deltaLng / 2) ** 2;
+  return earthRadius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(__dirname));
@@ -170,7 +185,8 @@ function mapAttendanceRecord(record) {
     userId: record.user_id,
     date: record.date,
     checkIn: record.check_in,
-    checkOut: record.check_out
+    checkOut: record.check_out,
+    distanceMeters: record.distance_meters == null ? null : Number(record.distance_meters)
   };
 }
 
@@ -192,7 +208,7 @@ async function getAttendanceForUserOnDate(userId, date) {
     query: {
       user_id: `eq.${userId}`,
       date: `eq.${date}`,
-      select: 'id,user_id,date,check_in,check_out'
+      select: 'id,user_id,date,check_in,check_out,distance_meters'
     }
   });
   return Array.isArray(rows) ? rows[0] : rows;
@@ -265,7 +281,13 @@ app.get('/api/attendance/today', async (req, res) => {
 });
 
 app.post('/api/attendance/checkin', async (req, res) => {
-  const { userId } = req.body;
+  const { userId, latitude, longitude } = req.body;
+
+  if (typeof latitude !== 'number' || typeof longitude !== 'number'
+    || !Number.isFinite(latitude) || !Number.isFinite(longitude)
+    || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+    return res.status(400).json({ message: 'Lokasi GPS wajib tersedia saat absen masuk.' });
+  }
 
   try {
     const jamMasukStandar = await getJamMasukStandar();
@@ -304,13 +326,15 @@ app.post('/api/attendance/checkin', async (req, res) => {
 
     const jakartaNow = getJakartaDate();
     const checkIn = `${String(jakartaNow.getUTCHours()).padStart(2, '0')}:${String(jakartaNow.getUTCMinutes()).padStart(2, '0')}`;
+    const distanceMeters = getDistanceMeters(latitude, longitude, SCHOOL_LOCATION.lat, SCHOOL_LOCATION.lng);
     const insertedRows = await supabaseRequest('attendance', {
       method: 'POST',
       body: [{
         user_id: userId,
         date: today,
         check_in: checkIn,
-        check_out: null
+        check_out: null,
+        distance_meters: Math.round(distanceMeters)
       }]
     });
     const inserted = Array.isArray(insertedRows) ? insertedRows[0] : insertedRows;
@@ -338,7 +362,7 @@ app.post('/api/attendance/checkout', async (req, res) => {
       query: {
         user_id: `eq.${userId}`,
         date: `eq.${today}`,
-        select: 'id,user_id,date,check_in,check_out'
+        select: 'id,user_id,date,check_in,check_out,distance_meters'
       }
     });
     const record = Array.isArray(rows) ? rows[0] : rows;
@@ -375,7 +399,7 @@ app.get('/api/attendance/history', async (req, res) => {
     const rows = await supabaseRequest('attendance', {
       query: {
         user_id: `eq.${userId}`,
-        select: 'id,user_id,date,check_in,check_out'
+        select: 'id,user_id,date,check_in,check_out,distance_meters'
       }
     });
     const records = (Array.isArray(rows) ? rows : []).map(mapAttendanceRecord).sort((a, b) => b.date.localeCompare(a.date));
@@ -449,7 +473,7 @@ app.get('/api/admin/monitoring', async (req, res) => {
     const attendanceRows = await supabaseRequest('attendance', {
       query: {
         date: `eq.${date}`,
-        select: 'id,user_id,date,check_in,check_out'
+        select: 'id,user_id,date,check_in,check_out,distance_meters'
       }
     });
     const attendances = (Array.isArray(attendanceRows) ? attendanceRows : []).map(mapAttendanceRecord);
@@ -515,7 +539,7 @@ app.get('/api/export/rekap', async (req, res) => {
     const attendanceRows = await supabaseRequest('attendance', {
       query: {
         and: `(date.gte.${startDate},date.lte.${endDate})`,
-        select: 'id,user_id,date,check_in,check_out'
+        select: 'id,user_id,date,check_in,check_out,distance_meters'
       }
     });
     const attendances = (Array.isArray(attendanceRows) ? attendanceRows : []).map(mapAttendanceRecord);
@@ -542,7 +566,8 @@ app.get('/api/export/rekap', async (req, res) => {
       { header: 'Terlambat', key: 'terlambat', width: 12 },
       { header: 'Izin', key: 'izin', width: 10 },
       { header: 'Sakit', key: 'sakit', width: 10 },
-      { header: 'Tidak Absen', key: 'mangkir', width: 14 }
+      { header: 'Tidak Absen', key: 'mangkir', width: 14 },
+      { header: 'Jarak Absen Masuk (m)', key: 'jarakMasuk', width: 22 }
     ];
 
     const detailSheet = workbook.addWorksheet('Detail');
@@ -551,7 +576,8 @@ app.get('/api/export/rekap', async (req, res) => {
       { header: 'Tanggal', key: 'tanggal', width: 14 },
       { header: 'Masuk', key: 'masuk', width: 12 },
       { header: 'Pulang', key: 'pulang', width: 12 },
-      { header: 'Status', key: 'status', width: 16 }
+      { header: 'Status', key: 'status', width: 16 },
+      { header: 'Jarak Absen Masuk (m)', key: 'jarakMasuk', width: 22 }
     ];
 
     teachers.forEach((teacher) => {
@@ -564,7 +590,17 @@ app.get('/api/export/rekap', async (req, res) => {
       const sakit = teacherLeaves.filter((l) => l.type === 'sakit').length;
       const mangkir = Math.max(0, hariKerja - hadir - terlambat - izin - sakit);
 
-      summarySheet.addRow({ guru: teacher.name, hariKerja, hadir, terlambat, izin, sakit, mangkir });
+      const firstAttendance = teacherAttendance.find((record) => record.distanceMeters != null);
+      summarySheet.addRow({
+        guru: teacher.name,
+        hariKerja,
+        hadir,
+        terlambat,
+        izin,
+        sakit,
+        mangkir,
+        jarakMasuk: firstAttendance?.distanceMeters ?? '--'
+      });
 
       // Untuk sheet Detail, jangan sertakan baris pada weekend
       const teacherLeavesForDetail = teacherLeaves.filter((l) => isWeekday(l.date));
@@ -573,18 +609,27 @@ app.get('/api/export/rekap', async (req, res) => {
           date: a.date,
           masuk: a.checkIn || '--:--',
           pulang: a.checkOut || '--:--',
-          status: getAttendanceStatus(a.checkIn, jamMasukStandar)
+          status: getAttendanceStatus(a.checkIn, jamMasukStandar),
+          distanceMeters: a.distanceMeters
         })),
         ...teacherLeavesForDetail.map((l) => ({
           date: l.date,
           masuk: '--:--',
           pulang: '--:--',
-          status: l.type === 'sakit' ? 'Sakit' : 'Izin'
+          status: l.type === 'sakit' ? 'Sakit' : 'Izin',
+          distanceMeters: null
         }))
       ].sort((a, b) => a.date.localeCompare(b.date));
 
       combinedRecords.forEach((record) => {
-        detailSheet.addRow({ guru: teacher.name, tanggal: record.date, masuk: record.masuk, pulang: record.pulang, status: record.status });
+        detailSheet.addRow({
+          guru: teacher.name,
+          tanggal: record.date,
+          masuk: record.masuk,
+          pulang: record.pulang,
+          status: record.status,
+          jarakMasuk: record.distanceMeters == null ? '--' : record.distanceMeters
+        });
       });
     });
 

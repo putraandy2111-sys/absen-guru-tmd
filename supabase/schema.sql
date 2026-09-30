@@ -16,8 +16,12 @@ create table if not exists public.attendance (
   date text not null,
   check_in text,
   check_out text,
+  distance_meters numeric,
   created_at timestamptz default now()
 );
+
+alter table public.attendance
+add column if not exists distance_meters numeric;
 
 create table if not exists public.leaves (
   id uuid primary key default gen_random_uuid(),

@@ -9,7 +9,9 @@ const appState = {
   today: null,
   leaveType: 'sakit',
   jamMasukStandar: '08:30',
-  supabaseConfig: null
+  supabaseConfig: null,
+  latestLocation: null,
+  locationWatchId: null
 };
 
 // Storage helper untuk menangani localStorage yang tidak tersedia
@@ -253,6 +255,11 @@ function loginUser(user) {
 
 async function logout() {
   appState.user = null;
+  if (appState.locationWatchId !== null && navigator.geolocation) {
+    navigator.geolocation.clearWatch(appState.locationWatchId);
+    appState.locationWatchId = null;
+  }
+  appState.latestLocation = null;
   StorageHelper.removeItem('currentUser');
   logoutButton?.classList.add('hidden');
   showSection('loginSection');
@@ -260,6 +267,10 @@ async function logout() {
 
 async function updateLocationStatus() {
   if (!locationLabel || !locationDistance) return;
+  if (appState.locationWatchId !== null) {
+    navigator.geolocation.clearWatch(appState.locationWatchId);
+    appState.locationWatchId = null;
+  }
   if (!navigator.geolocation) {
     locationLabel.textContent = 'Lokasi tidak tersedia';
     locationDistance.textContent = 'Browser Anda tidak mendukung geolokasi.';
@@ -269,18 +280,24 @@ async function updateLocationStatus() {
   locationLabel.textContent = 'Mendeteksi lokasi...';
   locationDistance.textContent = 'Izinkan akses lokasi untuk validasi area sekolah.';
 
-  navigator.geolocation.getCurrentPosition(
-    (position) => {
-      const { latitude, longitude } = position.coords;
-      const distance = getDistanceMeters(latitude, longitude, SCHOOL_LOCATION.lat, SCHOOL_LOCATION.lng);
-      const inside = distance <= SCHOOL_RADIUS_METERS;
-      locationLabel.textContent = inside ? 'Di dalam area sekolah' : 'Di luar area sekolah';
-      locationDistance.textContent = formatDistance(distance);
-    },
-    () => {
-      locationLabel.textContent = 'Lokasi tidak dapat dideteksi';
-      locationDistance.textContent = 'Periksa izin lokasi dan coba lagi.';
-    },
+  const handleLocationUpdate = (position) => {
+    const { latitude, longitude } = position.coords;
+    const distance = getDistanceMeters(latitude, longitude, SCHOOL_LOCATION.lat, SCHOOL_LOCATION.lng);
+    const inside = distance <= SCHOOL_RADIUS_METERS;
+    appState.latestLocation = { latitude, longitude, accuracy: position.coords.accuracy };
+    locationLabel.textContent = inside ? 'Di dalam area sekolah' : 'Di luar area sekolah';
+    locationDistance.textContent = formatDistance(distance);
+  };
+
+  const handleLocationError = () => {
+    appState.latestLocation = null;
+    locationLabel.textContent = 'Lokasi tidak dapat dideteksi';
+    locationDistance.textContent = 'Periksa izin lokasi dan coba lagi.';
+  };
+
+  appState.locationWatchId = navigator.geolocation.watchPosition(
+    handleLocationUpdate,
+    handleLocationError,
     { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
   );
 }
@@ -484,9 +501,12 @@ loginForm.addEventListener('submit', async (event) => {
 checkInButton.addEventListener('click', async () => {
   checkInButton.disabled = true;
   try {
+    if (!appState.latestLocation) {
+      throw new Error('Lokasi belum terdeteksi. Aktifkan GPS dan coba lagi.');
+    }
     await api('/api/attendance/checkin', {
       method: 'POST',
-      body: JSON.stringify({ userId: appState.user.id })
+      body: JSON.stringify({ userId: appState.user.id, ...appState.latestLocation })
     });
     await loadHome();
   } catch (error) {
