@@ -9,6 +9,7 @@ const schema = fs.readFileSync(path.join(root, 'supabase', 'schema.sql'), 'utf8'
 const migration = fs.readFileSync(path.join(root, 'supabase', 'migrations', '20260930_snapshot_attendance_standard.sql'), 'utf8');
 const secureMigration = fs.readFileSync(path.join(root, 'supabase', 'migrations', '20261123_secure_sessions.sql'), 'utf8');
 const passwordMigration = fs.readFileSync(path.join(root, 'supabase', 'migrations', '20261123_allow_legacy_password_null.sql'), 'utf8');
+const rlsMigration = fs.readFileSync(path.join(root, 'supabase', 'migrations', '20261123_enable_rls_on_app_tables.sql'), 'utf8');
 
 assert.ok(db.settings && db.settings.jamMasukStandar === '07:30', 'db.json harus punya settings.jamMasukStandar default 07:30');
 assert.match(server, /async function getJamMasukStandar\(\)/, 'server.js harus menyediakan getJamMasukStandar tanpa argumen');
@@ -22,5 +23,8 @@ assert.ok(!migration.includes('08:30'), 'Migration tidak boleh mempertahankan de
 assert.ok(secureMigration.includes('password_hash'), 'Migration keamanan harus menambahkan password_hash');
 assert.ok(secureMigration.includes('public.sessions'), 'Migration keamanan harus membuat tabel session');
 assert.match(passwordMigration, /ALTER COLUMN password DROP NOT NULL/i, 'Migration harus mengizinkan password teks lama dikosongkan setelah hashing');
+for (const table of ['users', 'attendance', 'leaves', 'settings']) {
+  assert.match(rlsMigration, new RegExp(`ALTER TABLE public\\.${table} ENABLE ROW LEVEL SECURITY`, 'i'), `Migration harus mengaktifkan RLS pada ${table}`);
+}
 
 console.log('Settings test OK');
