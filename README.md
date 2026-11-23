@@ -32,3 +32,32 @@ Aplikasi absensi guru berbasis frontend statis dengan integrasi Supabase.
 npm install
 npm start
 ```
+
+## Android app (Capacitor)
+
+The Android app packages the existing web UI. Its API remains hosted at
+`https://absen.tmd.com`, so the phone needs an internet connection to log in and
+sync attendance. The backend must be deployed with this repository's current
+changes before the app can connect.
+
+1. Install Android Studio and its Android SDK, plus a supported JDK.
+2. Install the project dependencies and generate the Android project:
+
+   ```bash
+   npm install
+   npx cap add android
+   ```
+
+3. Deploy the backend changes. By default, the backend allows the Android
+   WebView origins `https://localhost` and `capacitor://localhost`; set
+   `CORS_ORIGINS` if the web app also needs additional origins.
+4. Build and sync the web assets, then open the project in Android Studio:
+
+   ```bash
+   npm run cap:sync
+   npx cap open android
+   ```
+
+The `android` npm script performs the last two commands together.
+The mobile build uses `https://absen.tmd.com` as its API origin; override it with
+the `CAPACITOR_API_URL` environment variable when building for another backend.

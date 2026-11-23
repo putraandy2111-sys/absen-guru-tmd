@@ -1,4 +1,4 @@
-if ('serviceWorker' in navigator) {
+if ('serviceWorker' in navigator && !window.APP_CONFIG?.isNative) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js');
   });
@@ -8,7 +8,7 @@ const appState = {
   user: null,
   today: null,
   leaveType: 'sakit',
-  jamMasukStandar: '08:30',
+  jamMasukStandar: '07:30',
   supabaseConfig: null,
   latestLocation: null,
   locationWatchId: null
@@ -193,13 +193,15 @@ function getCurrentTime() {
   return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 }
 
-function getStatusLabel(checkIn, jamMasukStandar = '08:30') {
+function getStatusLabel(checkIn, jamMasukStandar = '07:30') {
   if (!checkIn) return 'Belum absen';
   return checkIn <= jamMasukStandar ? 'Hadir' : 'Terlambat';
 }
 
 async function api(path, options = {}) {
-  const response = await fetch(path, {
+  const apiBaseUrl = window.APP_CONFIG?.apiBaseUrl || '';
+  const requestUrl = apiBaseUrl ? new URL(path, `${apiBaseUrl.replace(/\/+$/, '')}/`) : path;
+  const response = await fetch(requestUrl, {
     headers: {
       ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' })
     },
@@ -338,7 +340,9 @@ async function loadTodayAttendance() {
   try {
     const data = await api(`/api/attendance/today?userId=${encodeURIComponent(appState.user.id)}`);
     const attendance = data.attendance || null;
-    const status = attendance ? getStatusLabel(attendance.checkIn, data.jamMasukStandar) : 'Belum absen';
+    const status = attendance
+      ? getStatusLabel(attendance.checkIn, attendance.jamMasukStandar || data.jamMasukStandar)
+      : 'Belum absen';
     attendanceLabel.textContent = attendance ? `${status} masuk` : 'Belum absen masuk';
     attendanceTime.textContent = attendance ? attendance.checkIn : '--:--';
     document.getElementById('attendanceInSummary').textContent = attendance ? attendance.checkIn : 'Belum absen';
@@ -354,8 +358,8 @@ async function loadHistory() {
   try {
     const data = await api(`/api/attendance/history?userId=${encodeURIComponent(appState.user.id)}`);
     const records = data.history || [];
-    const present = records.filter((item) => item.checkIn && item.checkIn <= data.jamMasukStandar).length;
-    const late = records.filter((item) => item.checkIn && item.checkIn > data.jamMasukStandar).length;
+    const present = records.filter((item) => item.checkIn && item.checkIn <= (item.jamMasukStandar || data.jamMasukStandar)).length;
+    const late = records.filter((item) => item.checkIn && item.checkIn > (item.jamMasukStandar || data.jamMasukStandar)).length;
     const absent = records.filter((item) => !item.checkIn).length;
 
     historyPresent.textContent = present;
@@ -365,7 +369,7 @@ async function loadHistory() {
 
     historyList.innerHTML = records
       .map((record) => {
-        const status = getStatusLabel(record.checkIn, data.jamMasukStandar);
+        const status = getStatusLabel(record.checkIn, record.jamMasukStandar || data.jamMasukStandar);
         return `
           <div class="history-item">
             <div>
@@ -437,7 +441,7 @@ async function loadMonitoring() {
 async function loadAdminSettings() {
   try {
     const data = await api('/api/admin/settings');
-    appState.jamMasukStandar = data.settings?.jamMasukStandar || '08:30';
+    appState.jamMasukStandar = data.settings?.jamMasukStandar || '07:30';
     adminTimeStandardInput.value = appState.jamMasukStandar;
   } catch (error) {
     console.error(error);

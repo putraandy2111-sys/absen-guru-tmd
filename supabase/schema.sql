@@ -10,6 +10,51 @@ create table if not exists public.profiles (
   created_at timestamptz default now()
 );
 
+do $$
+declare
+  legacy_standard text := '07:30';
+begin
+  if to_regclass('public.settings') is not null
+     and not exists (
+       select 1
+       from information_schema.columns
+       where table_schema = 'public'
+         and table_name = 'settings'
+         and column_name = 'key'
+     )
+     and exists (
+       select 1
+       from information_schema.columns
+       where table_schema = 'public'
+         and table_name = 'settings'
+         and column_name = 'jam_masuk_standar'
+     ) then
+    execute 'select coalesce(jam_masuk_standar, ''07:30'') from public.settings limit 1'
+      into legacy_standard;
+    alter table public.settings rename to settings_legacy_standardization;
+
+    create table public.settings (
+      key text primary key,
+      value text not null
+    );
+
+    insert into public.settings(key, value)
+    values ('jamMasukStandar', coalesce(nullif(legacy_standard, ''), '07:30'))
+    on conflict (key) do update set value = excluded.value;
+
+    drop table public.settings_legacy_standardization;
+  end if;
+end $$;
+
+create table if not exists public.settings (
+  key text primary key,
+  value text not null
+);
+
+insert into public.settings(key, value)
+values ('jamMasukStandar', '07:30')
+on conflict (key) do nothing;
+
 create table if not exists public.attendance (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references public.profiles(id) on delete cascade,
@@ -17,11 +62,22 @@ create table if not exists public.attendance (
   check_in text,
   check_out text,
   distance_meters numeric,
+  jam_masuk_standar text,
   created_at timestamptz default now()
 );
 
 alter table public.attendance
 add column if not exists distance_meters numeric;
+
+alter table public.attendance
+add column if not exists jam_masuk_standar text;
+
+update public.attendance
+set jam_masuk_standar = coalesce(
+  (select value from public.settings where key = 'jamMasukStandar'),
+  '07:30'
+)
+where jam_masuk_standar is null;
 
 create table if not exists public.leaves (
   id uuid primary key default gen_random_uuid(),
@@ -32,11 +88,6 @@ create table if not exists public.leaves (
   attachment_url text,
   status text not null default 'Menunggu',
   submitted_at timestamptz default now()
-);
-
-create table if not exists public.settings (
-  id integer primary key default 1,
-  jam_masuk_standar text not null default '08:30'
 );
 
 alter table public.profiles enable row level security;
@@ -84,6 +135,3 @@ on public.settings
 for update
 using (auth.role() = 'authenticated');
 
-insert into public.settings(id, jam_masuk_standar)
-values (1, '08:30')
-on conflict (id) do nothing;

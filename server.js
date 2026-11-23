@@ -1,6 +1,7 @@
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
+const cors = require('cors');
 const multer = require('multer');
 const { v4: uuidv4 } = require('uuid');
 const ExcelJS = require('exceljs');
@@ -36,6 +37,10 @@ loadEnvFile();
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
+const allowedOrigins = (process.env.CORS_ORIGINS || 'https://localhost,capacitor://localhost')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 
 if (!fs.existsSync(UPLOAD_DIR)) {
   fs.mkdirSync(UPLOAD_DIR);
@@ -66,6 +71,7 @@ function getDistanceMeters(lat1, lng1, lat2, lng2) {
   return earthRadius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+app.use(cors({ origin: allowedOrigins }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(__dirname));
@@ -105,7 +111,7 @@ function isWeekday(dateString) {
   }
 }
 
-function getAttendanceStatus(checkIn, jamMasukStandar = '08:30') {
+function getAttendanceStatus(checkIn, jamMasukStandar = '07:30') {
   if (!checkIn) return 'Belum absen';
   const [inHour, inMinute] = checkIn.split(':').map(Number);
   const [stdHour, stdMinute] = jamMasukStandar.split(':').map(Number);
@@ -186,7 +192,8 @@ function mapAttendanceRecord(record) {
     date: record.date,
     checkIn: record.check_in,
     checkOut: record.check_out,
-    distanceMeters: record.distance_meters == null ? null : Number(record.distance_meters)
+    distanceMeters: record.distance_meters == null ? null : Number(record.distance_meters),
+    jamMasukStandar: record.jam_masuk_standar || null
   };
 }
 
@@ -208,7 +215,7 @@ async function getAttendanceForUserOnDate(userId, date) {
     query: {
       user_id: `eq.${userId}`,
       date: `eq.${date}`,
-      select: 'id,user_id,date,check_in,check_out,distance_meters'
+      select: 'id,user_id,date,check_in,check_out,distance_meters,jam_masuk_standar'
     }
   });
   return Array.isArray(rows) ? rows[0] : rows;
@@ -223,11 +230,9 @@ async function getJamMasukStandar() {
       }
     });
     const settingsRow = Array.isArray(rows) ? rows[0] : rows;
-    // Jika baris ditemukan, kembalikan value; jika tidak ditemukan, fallback ke '08:30'
-    return settingsRow?.value || '08:30';
+    return settingsRow?.value || '07:30';
   } catch (error) {
-    // Jika ada error jaringan atau Supabase, fallback ke '08:30'
-    return '08:30';
+    return '07:30';
   }
 }
 
@@ -269,9 +274,10 @@ app.get('/api/attendance/today', async (req, res) => {
     const jamMasukStandar = await getJamMasukStandar();
     const today = getToday();
     const attendance = await getAttendanceForUserOnDate(userId, today);
+    const attendanceRecord = attendance ? mapAttendanceRecord(attendance) : null;
     return res.json({
-      attendance: attendance ? mapAttendanceRecord(attendance) : null,
-      status: attendance ? getAttendanceStatus(attendance.check_in, jamMasukStandar) : 'Belum absen',
+      attendance: attendanceRecord,
+      status: attendanceRecord ? getAttendanceStatus(attendanceRecord.checkIn, attendanceRecord.jamMasukStandar || jamMasukStandar) : 'Belum absen',
       today,
       jamMasukStandar
     });
@@ -334,7 +340,8 @@ app.post('/api/attendance/checkin', async (req, res) => {
         date: today,
         check_in: checkIn,
         check_out: null,
-        distance_meters: Math.round(distanceMeters)
+        distance_meters: Math.round(distanceMeters),
+        jam_masuk_standar: jamMasukStandar
       }]
     });
     const inserted = Array.isArray(insertedRows) ? insertedRows[0] : insertedRows;
@@ -362,7 +369,7 @@ app.post('/api/attendance/checkout', async (req, res) => {
       query: {
         user_id: `eq.${userId}`,
         date: `eq.${today}`,
-        select: 'id,user_id,date,check_in,check_out,distance_meters'
+        select: 'id,user_id,date,check_in,check_out,distance_meters,jam_masuk_standar'
       }
     });
     const record = Array.isArray(rows) ? rows[0] : rows;
@@ -399,7 +406,7 @@ app.get('/api/attendance/history', async (req, res) => {
     const rows = await supabaseRequest('attendance', {
       query: {
         user_id: `eq.${userId}`,
-        select: 'id,user_id,date,check_in,check_out,distance_meters'
+        select: 'id,user_id,date,check_in,check_out,distance_meters,jam_masuk_standar'
       }
     });
     const records = (Array.isArray(rows) ? rows : []).map(mapAttendanceRecord).sort((a, b) => b.date.localeCompare(a.date));
@@ -473,7 +480,7 @@ app.get('/api/admin/monitoring', async (req, res) => {
     const attendanceRows = await supabaseRequest('attendance', {
       query: {
         date: `eq.${date}`,
-        select: 'id,user_id,date,check_in,check_out,distance_meters'
+        select: 'id,user_id,date,check_in,check_out,distance_meters,jam_masuk_standar'
       }
     });
     const attendances = (Array.isArray(attendanceRows) ? attendanceRows : []).map(mapAttendanceRecord);
@@ -485,8 +492,8 @@ app.get('/api/admin/monitoring', async (req, res) => {
     });
     const leaves = (Array.isArray(leaveRows) ? leaveRows : []).map(mapLeaveRecord);
 
-    const hadir = attendances.filter((record) => record.checkIn && getAttendanceStatus(record.checkIn, jamMasukStandar) === 'Hadir').length;
-    const terlambat = attendances.filter((record) => record.checkIn && getAttendanceStatus(record.checkIn, jamMasukStandar) === 'Terlambat').length;
+    const hadir = attendances.filter((record) => record.checkIn && getAttendanceStatus(record.checkIn, record.jamMasukStandar || jamMasukStandar) === 'Hadir').length;
+    const terlambat = attendances.filter((record) => record.checkIn && getAttendanceStatus(record.checkIn, record.jamMasukStandar || jamMasukStandar) === 'Terlambat').length;
     const izinSakit = leaves.length;
     const belumAbsen = teachers.length - attendances.length;
     const table = teachers.map((teacher) => {
@@ -505,7 +512,7 @@ app.get('/api/admin/monitoring', async (req, res) => {
           name: teacher.name,
           checkIn: record.checkIn,
           checkOut: record.checkOut || '--:--',
-          status: getAttendanceStatus(record.checkIn, jamMasukStandar)
+          status: getAttendanceStatus(record.checkIn, record.jamMasukStandar || jamMasukStandar)
         };
       }
       return {
@@ -539,7 +546,7 @@ app.get('/api/export/rekap', async (req, res) => {
     const attendanceRows = await supabaseRequest('attendance', {
       query: {
         and: `(date.gte.${startDate},date.lte.${endDate})`,
-        select: 'id,user_id,date,check_in,check_out,distance_meters'
+        select: 'id,user_id,date,check_in,check_out,distance_meters,jam_masuk_standar'
       }
     });
     const attendances = (Array.isArray(attendanceRows) ? attendanceRows : []).map(mapAttendanceRecord);
@@ -584,8 +591,8 @@ app.get('/api/export/rekap', async (req, res) => {
       const teacherAttendance = attendancesWeekday.filter((a) => a.userId === teacher.id);
       const teacherLeaves = leaves.filter((l) => l.userId === teacher.id);
 
-      const hadir = teacherAttendance.filter((a) => getAttendanceStatus(a.checkIn, jamMasukStandar) === 'Hadir').length;
-      const terlambat = teacherAttendance.filter((a) => getAttendanceStatus(a.checkIn, jamMasukStandar) === 'Terlambat').length;
+      const hadir = teacherAttendance.filter((a) => getAttendanceStatus(a.checkIn, a.jamMasukStandar || jamMasukStandar) === 'Hadir').length;
+      const terlambat = teacherAttendance.filter((a) => getAttendanceStatus(a.checkIn, a.jamMasukStandar || jamMasukStandar) === 'Terlambat').length;
       const izin = teacherLeaves.filter((l) => l.type === 'izin').length;
       const sakit = teacherLeaves.filter((l) => l.type === 'sakit').length;
       const mangkir = Math.max(0, hariKerja - hadir - terlambat - izin - sakit);
@@ -609,7 +616,7 @@ app.get('/api/export/rekap', async (req, res) => {
           date: a.date,
           masuk: a.checkIn || '--:--',
           pulang: a.checkOut || '--:--',
-          status: getAttendanceStatus(a.checkIn, jamMasukStandar),
+          status: getAttendanceStatus(a.checkIn, a.jamMasukStandar || jamMasukStandar),
           distanceMeters: a.distanceMeters
         })),
         ...teacherLeavesForDetail.map((l) => ({
