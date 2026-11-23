@@ -112,6 +112,9 @@ const rekapEndDate = document.getElementById('rekapEndDate');
 const rekapExportButton = document.getElementById('rekapExportButton');
 const adminTimeStandardInput = document.getElementById('adminTimeStandardInput');
 const saveStandardButton = document.getElementById('saveStandardButton');
+const resetPasswordUsername = document.getElementById('resetPasswordUsername');
+const resetPasswordNew = document.getElementById('resetPasswordNew');
+const resetPasswordButton = document.getElementById('resetPasswordButton');
 const homeClock = document.getElementById('homeClock');
 const backFromForm = document.getElementById('backFromForm');
 const backFromHistory = document.getElementById('backFromHistory');
@@ -201,9 +204,11 @@ function getStatusLabel(checkIn, jamMasukStandar = '07:30') {
 async function api(path, options = {}) {
   const apiBaseUrl = window.APP_CONFIG?.apiBaseUrl || '';
   const requestUrl = apiBaseUrl ? new URL(path, `${apiBaseUrl.replace(/\/+$/, '')}/`) : path;
+  const sessionToken = StorageHelper.getItem('sessionToken');
   const response = await fetch(requestUrl, {
     headers: {
-      ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' })
+      ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
+      ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {})
     },
     ...options
   });
@@ -233,22 +238,28 @@ async function initializeAuth() {
 
   try {
     const storedUser = StorageHelper.getItem('currentUser');
-    if (storedUser) {
+    const sessionToken = StorageHelper.getItem('sessionToken');
+    if (storedUser && sessionToken) {
       const parsedUser = JSON.parse(storedUser);
-      loginUser(parsedUser);
+      const data = await api('/api/auth/session');
+      loginUser(data.user, sessionToken);
       return;
     }
   } catch (error) {
     console.warn('Gagal memuat sesi tersimpan:', error);
     StorageHelper.removeItem('currentUser');
+    StorageHelper.removeItem('sessionToken');
   }
 
   showSection('loginSection');
 }
 
-function loginUser(user) {
+function loginUser(user, sessionToken) {
   appState.user = user;
   StorageHelper.setItem('currentUser', JSON.stringify(user));
+  if (sessionToken) {
+    StorageHelper.setItem('sessionToken', sessionToken);
+  }
   logoutButton?.classList.remove('hidden');
   setRoleUI();
   showSection('home');
@@ -256,6 +267,11 @@ function loginUser(user) {
 }
 
 async function logout() {
+  try {
+    await api('/api/auth/logout', { method: 'POST', body: JSON.stringify({}) });
+  } catch (error) {
+    console.warn('Gagal mencabut sesi di server:', error);
+  }
   appState.user = null;
   if (appState.locationWatchId !== null && navigator.geolocation) {
     navigator.geolocation.clearWatch(appState.locationWatchId);
@@ -263,6 +279,7 @@ async function logout() {
   }
   appState.latestLocation = null;
   StorageHelper.removeItem('currentUser');
+  StorageHelper.removeItem('sessionToken');
   logoutButton?.classList.add('hidden');
   showSection('loginSection');
 }
@@ -496,7 +513,7 @@ loginForm.addEventListener('submit', async (event) => {
 
     loginUsername.value = '';
     loginPassword.value = '';
-    loginUser(data.user);
+    loginUser(data.user, data.sessionToken);
   } catch (error) {
     alert(error.message || 'Login gagal. Pastikan username dan password benar.');
   }
@@ -587,6 +604,27 @@ saveStandardButton?.addEventListener('click', async () => {
   }
 });
 
+resetPasswordButton?.addEventListener('click', async () => {
+  const username = resetPasswordUsername.value.trim();
+  const newPassword = resetPasswordNew.value;
+  if (!username || newPassword.length < 6) {
+    alert('Isi username guru dan password baru minimal 6 karakter.');
+    return;
+  }
+
+  try {
+    const data = await api('/api/admin/users/reset-password', {
+      method: 'POST',
+      body: JSON.stringify({ username, newPassword })
+    });
+    resetPasswordUsername.value = '';
+    resetPasswordNew.value = '';
+    alert(data.message || 'Password guru berhasil diperbarui.');
+  } catch (error) {
+    alert(error.message || 'Gagal reset password.');
+  }
+});
+
 logoutButton?.addEventListener('click', logout);
 backFromForm?.addEventListener('click', () => {
   showSection('home');
@@ -601,7 +639,7 @@ backFromMonitoring?.addEventListener('click', () => {
   loadHome();
 });
 
-rekapExportButton?.addEventListener('click', () => {
+rekapExportButton?.addEventListener('click', async () => {
   const start = rekapStartDate.value;
   const end = rekapEndDate.value;
   if (!start || !end) {
@@ -612,7 +650,31 @@ rekapExportButton?.addEventListener('click', () => {
     alert('Tanggal mulai tidak boleh lebih besar dari tanggal akhir.');
     return;
   }
-  window.location.href = `/api/export/rekap?startDate=${encodeURIComponent(start)}&endDate=${encodeURIComponent(end)}`;
+  try {
+    const apiBaseUrl = window.APP_CONFIG?.apiBaseUrl || '';
+    const requestUrl = apiBaseUrl
+      ? new URL(`/api/export/rekap?startDate=${encodeURIComponent(start)}&endDate=${encodeURIComponent(end)}`, `${apiBaseUrl.replace(/\/+$/, '')}/`)
+      : `/api/export/rekap?startDate=${encodeURIComponent(start)}&endDate=${encodeURIComponent(end)}`;
+    const sessionToken = StorageHelper.getItem('sessionToken');
+    const response = await fetch(requestUrl, {
+      headers: sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.message || 'Gagal mengekspor rekap.');
+    }
+    const blob = await response.blob();
+    const downloadUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = downloadUrl;
+    link.download = `rekap-absensi-${start}_${end}.xlsx`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(downloadUrl);
+  } catch (error) {
+    alert(error.message || 'Gagal mengekspor rekap.');
+  }
 });
 
 showSection('loginSection');

@@ -18,5 +18,10 @@ assert.ok(schema.includes('jam_masuk_standar text'), 'Schema attendance harus me
 assert.ok(server.includes('jam_masuk_standar: jamMasukStandar'), 'Check-in harus menyimpan jam standar yang berlaku');
 assert.ok(server.includes('record.jamMasukStandar || jamMasukStandar'), 'Status attendance harus memakai snapshot per record');
 assert.ok(script.includes('item.jamMasukStandar || data.jamMasukStandar'), 'Riwayat harus memakai snapshot jam standar per record');
+assert.ok(server.includes('async function hashPassword'), 'Server harus menyediakan hash password');
+assert.ok(server.includes("Authorization`") || server.includes('authorization'), 'Server harus memvalidasi authorization session');
+assert.ok(server.includes("app.post('/api/admin/users/reset-password'"), 'Server harus menyediakan reset password khusus admin');
+assert.ok(script.includes("StorageHelper.getItem('sessionToken')"), 'Frontend harus menyimpan dan memakai session token');
+assert.ok(!html.includes('guru123') && !html.includes('admin123'), 'Halaman login tidak boleh menampilkan password demo');
 
 console.log('Semua verifikasi UI terpenuhi.');

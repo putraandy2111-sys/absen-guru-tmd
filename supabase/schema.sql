@@ -1,5 +1,16 @@
 create extension if not exists pgcrypto;
 
+create table if not exists public.users (
+  id text primary key,
+  username text unique not null,
+  name text not null,
+  role text not null default 'teacher',
+  school text,
+  password text,
+  password_hash text,
+  created_at timestamptz default now()
+);
+
 create table if not exists public.profiles (
   id uuid primary key,
   email text unique not null,
@@ -9,6 +20,21 @@ create table if not exists public.profiles (
   school text,
   created_at timestamptz default now()
 );
+
+alter table public.users
+add column if not exists password_hash text;
+
+create table if not exists public.sessions (
+  token_hash text primary key,
+  user_id text not null,
+  created_at timestamptz not null default now(),
+  revoked_at timestamptz
+);
+
+create index if not exists sessions_user_id_idx
+on public.sessions(user_id);
+
+alter table public.sessions enable row level security;
 
 do $$
 declare

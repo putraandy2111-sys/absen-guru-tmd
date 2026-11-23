@@ -7,6 +7,7 @@ const db = JSON.parse(fs.readFileSync(path.join(root, 'db.json'), 'utf8'));
 const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
 const schema = fs.readFileSync(path.join(root, 'supabase', 'schema.sql'), 'utf8');
 const migration = fs.readFileSync(path.join(root, 'supabase', 'migrations', '20260930_snapshot_attendance_standard.sql'), 'utf8');
+const secureMigration = fs.readFileSync(path.join(root, 'supabase', 'migrations', '20261123_secure_sessions.sql'), 'utf8');
 
 assert.ok(db.settings && db.settings.jamMasukStandar === '07:30', 'db.json harus punya settings.jamMasukStandar default 07:30');
 assert.match(server, /async function getJamMasukStandar\(\)/, 'server.js harus menyediakan getJamMasukStandar tanpa argumen');
@@ -17,5 +18,7 @@ assert.ok(schema.includes('key text primary key'), 'Schema settings harus memaka
 assert.ok(schema.includes('value text not null'), 'Schema settings harus memakai value sebagai teks wajib');
 assert.ok(!schema.includes('jam_masuk_standar text not null'), 'Schema lama settings jam_masuk_standar tidak boleh tetap dipakai');
 assert.ok(!migration.includes('08:30'), 'Migration tidak boleh mempertahankan default lama 08:30');
+assert.ok(secureMigration.includes('password_hash'), 'Migration keamanan harus menambahkan password_hash');
+assert.ok(secureMigration.includes('public.sessions'), 'Migration keamanan harus membuat tabel session');
 
 console.log('Settings test OK');

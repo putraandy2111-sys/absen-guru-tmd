@@ -5,6 +5,10 @@ const cors = require('cors');
 const multer = require('multer');
 const { v4: uuidv4 } = require('uuid');
 const ExcelJS = require('exceljs');
+const crypto = require('crypto');
+const { promisify } = require('util');
+
+const scryptAsync = promisify(crypto.scrypt);
 
 const app = express();
 const PORT = process.env.PORT || 8001;
@@ -210,6 +214,84 @@ function mapLeaveRecord(record) {
   };
 }
 
+function hashToken(token) {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+async function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const derivedKey = await scryptAsync(password, salt, 64);
+  return `scrypt$${salt}$${derivedKey.toString('hex')}`;
+}
+
+async function verifyPassword(password, storedPassword) {
+  if (!storedPassword) return false;
+
+  if (!storedPassword.startsWith('scrypt$')) {
+    const providedHash = crypto.createHash('sha256').update(password).digest();
+    const storedHash = crypto.createHash('sha256').update(storedPassword).digest();
+    return crypto.timingSafeEqual(providedHash, storedHash);
+  }
+
+  const parts = storedPassword.split('$');
+  if (parts.length !== 3) return false;
+
+  const salt = parts[1];
+  const expected = Buffer.from(parts[2], 'hex');
+  const actual = await scryptAsync(password, salt, expected.length);
+  return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
+}
+
+async function getSessionUser(req) {
+  const authorization = req.headers.authorization || '';
+  const match = authorization.match(/^Bearer\s+(.+)$/i);
+  if (!match) return null;
+
+  const tokenHash = hashToken(match[1]);
+  const sessionRows = await supabaseRequest('sessions', {
+    query: {
+      token_hash: `eq.${tokenHash}`,
+      revoked_at: 'is.null',
+      select: 'user_id'
+    }
+  });
+  const session = Array.isArray(sessionRows) ? sessionRows[0] : sessionRows;
+  if (!session?.user_id) return null;
+
+  const userRows = await supabaseRequest('users', {
+    query: {
+      id: `eq.${session.user_id}`,
+      select: 'id,username,name,role,school'
+    }
+  });
+  const user = Array.isArray(userRows) ? userRows[0] : userRows;
+  return user ? mapProfileRecord(user) : null;
+}
+
+async function requireSession(req, res) {
+  try {
+    const user = await getSessionUser(req);
+    if (!user) {
+      res.status(401).json({ message: 'Sesi login tidak valid. Silakan login kembali.' });
+      return null;
+    }
+    return user;
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ message: error.message || 'Gagal memvalidasi sesi.' });
+    return null;
+  }
+}
+
+async function requireAdmin(req, res) {
+  const user = await requireSession(req, res);
+  if (!user) return null;
+  if (user.role !== 'admin' && user.role !== 'principal') {
+    res.status(403).json({ message: 'Akses khusus admin.' });
+    return null;
+  }
+  return user;
+}
+
 async function getAttendanceForUserOnDate(userId, date) {
   const rows = await supabaseRequest('attendance', {
     query: {
@@ -240,14 +322,25 @@ async function getUserForLogin(username, password) {
   const rows = await supabaseRequest('users', {
     query: {
       username: `eq.${username}`,
-      password: `eq.${password}`,
-      select: 'id,username,name,role,school,password'
+      select: 'id,username,name,role,school,password,password_hash'
     }
   });
 
   const user = Array.isArray(rows) ? rows[0] : rows;
   if (!user) {
     return null;
+  }
+
+  const valid = await verifyPassword(password, user.password_hash || user.password);
+  if (!valid) return null;
+
+  if (!user.password_hash) {
+    const passwordHash = await hashPassword(password);
+    await supabaseRequest('users', {
+      method: 'PATCH',
+      query: { id: `eq.${user.id}` },
+      body: { password_hash: passwordHash, password: null }
+    });
   }
 
   return mapProfileRecord(user);
@@ -261,19 +354,85 @@ app.post('/api/login', async (req, res) => {
     if (!user) {
       return res.status(401).json({ message: 'Username atau password salah.' });
     }
-    return res.json({ user });
+    const sessionToken = crypto.randomBytes(32).toString('hex');
+    await supabaseRequest('sessions', {
+      method: 'POST',
+      body: [{
+        token_hash: hashToken(sessionToken),
+        user_id: user.id,
+        revoked_at: null
+      }]
+    });
+    return res.json({ user, sessionToken });
   } catch (error) {
     return res.status(error.statusCode || 500).json({ message: error.message || 'Login gagal.' });
   }
 });
 
+app.get('/api/auth/session', async (req, res) => {
+  const user = await requireSession(req, res);
+  if (!user) return;
+  return res.json({ user });
+});
+
+app.post('/api/auth/logout', async (req, res) => {
+  const authorization = req.headers.authorization || '';
+  const match = authorization.match(/^Bearer\s+(.+)$/i);
+  if (match) {
+    await supabaseRequest('sessions', {
+      method: 'PATCH',
+      query: { token_hash: `eq.${hashToken(match[1])}` },
+      body: { revoked_at: new Date().toISOString() }
+    }).catch(() => {});
+  }
+  return res.json({ success: true });
+});
+
+app.post('/api/admin/users/reset-password', async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+
+  const { username, newPassword } = req.body;
+  if (!username || typeof newPassword !== 'string' || newPassword.length < 6) {
+    return res.status(400).json({ message: 'Username dan password baru minimal 6 karakter wajib diisi.' });
+  }
+
+  try {
+    const userRows = await supabaseRequest('users', {
+      query: {
+        username: `eq.${username}`,
+        select: 'id,username,name,role,school'
+      }
+    });
+    const user = Array.isArray(userRows) ? userRows[0] : userRows;
+    if (!user) return res.status(404).json({ message: 'Guru tidak ditemukan.' });
+
+    const passwordHash = await hashPassword(newPassword);
+    await supabaseRequest('users', {
+      method: 'PATCH',
+      query: { id: `eq.${user.id}` },
+      body: { password_hash: passwordHash, password: null }
+    });
+    await supabaseRequest('sessions', {
+      method: 'PATCH',
+      query: { user_id: `eq.${user.id}`, revoked_at: 'is.null' },
+      body: { revoked_at: new Date().toISOString() }
+    }).catch(() => {});
+
+    return res.json({ success: true, message: `Password ${username} berhasil diperbarui.` });
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({ message: error.message || 'Gagal reset password.' });
+  }
+});
+
 app.get('/api/attendance/today', async (req, res) => {
-  const { userId } = req.query;
+  const sessionUser = await requireSession(req, res);
+  if (!sessionUser) return;
 
   try {
     const jamMasukStandar = await getJamMasukStandar();
     const today = getToday();
-    const attendance = await getAttendanceForUserOnDate(userId, today);
+    const attendance = await getAttendanceForUserOnDate(sessionUser.id, today);
     const attendanceRecord = attendance ? mapAttendanceRecord(attendance) : null;
     return res.json({
       attendance: attendanceRecord,
@@ -287,7 +446,9 @@ app.get('/api/attendance/today', async (req, res) => {
 });
 
 app.post('/api/attendance/checkin', async (req, res) => {
-  const { userId, latitude, longitude } = req.body;
+  const sessionUser = await requireSession(req, res);
+  if (!sessionUser) return;
+  const { latitude, longitude } = req.body;
 
   if (typeof latitude !== 'number' || typeof longitude !== 'number'
     || !Number.isFinite(latitude) || !Number.isFinite(longitude)
@@ -300,7 +461,7 @@ app.post('/api/attendance/checkin', async (req, res) => {
     const today = getToday();
     const profileRows = await supabaseRequest('users', {
       query: {
-        id: `eq.${userId}`,
+        id: `eq.${sessionUser.id}`,
         select: 'id'
       }
     });
@@ -308,23 +469,13 @@ app.post('/api/attendance/checkin', async (req, res) => {
     if (!profile) return res.status(404).json({ message: 'Pengguna tidak ditemukan.' });
 
     const existingQuery = {
-      user_id: `eq.${userId}`,
+      user_id: `eq.${sessionUser.id}`,
       date: `eq.${today}`,
       select: 'id'
     };
-    const existingUrl = new URL(`${SUPABASE_URL.replace(/\/$/, '')}/rest/v1/attendance`);
-    Object.entries(existingQuery).forEach(([key, value]) => existingUrl.searchParams.set(key, value));
-    console.log('CHECKIN EXISTING QUERY:', {
-      userId: userId,
-      userIdType: typeof userId,
-      today,
-      url: existingUrl.toString()
-    });
-
     const existingRows = await supabaseRequest('attendance', {
       query: existingQuery
     });
-    console.log('CHECKIN EXISTING RESULT:', { existingRows });
     const existing = Array.isArray(existingRows) ? existingRows[0] : existingRows;
     if (existing) {
       return res.status(400).json({ message: 'Anda sudah absen masuk hari ini.' });
@@ -336,7 +487,7 @@ app.post('/api/attendance/checkin', async (req, res) => {
     const insertedRows = await supabaseRequest('attendance', {
       method: 'POST',
       body: [{
-        user_id: userId,
+        user_id: sessionUser.id,
         date: today,
         check_in: checkIn,
         check_out: null,
@@ -345,15 +496,7 @@ app.post('/api/attendance/checkin', async (req, res) => {
       }]
     });
     const inserted = Array.isArray(insertedRows) ? insertedRows[0] : insertedRows;
-    console.log('CHECKIN INSERTED ROWS:', { insertedRows });
-    let mappedAttendance;
-    try {
-      mappedAttendance = mapAttendanceRecord(inserted);
-      console.log('CHECKIN MAPPED ATTENDANCE:', { mappedAttendance });
-    } catch (error) {
-      console.error('CHECKIN MAPPING ERROR:', error);
-      throw error;
-    }
+    const mappedAttendance = mapAttendanceRecord(inserted);
     return res.json({ attendance: mappedAttendance, status: getAttendanceStatus(checkIn, jamMasukStandar) });
   } catch (error) {
     return res.status(error.statusCode || 500).json({ message: error.message || 'Gagal absen masuk.' });
@@ -361,13 +504,14 @@ app.post('/api/attendance/checkin', async (req, res) => {
 });
 
 app.post('/api/attendance/checkout', async (req, res) => {
-  const { userId } = req.body;
+  const sessionUser = await requireSession(req, res);
+  if (!sessionUser) return;
 
   try {
     const today = getToday();
     const rows = await supabaseRequest('attendance', {
       query: {
-        user_id: `eq.${userId}`,
+        user_id: `eq.${sessionUser.id}`,
         date: `eq.${today}`,
         select: 'id,user_id,date,check_in,check_out,distance_meters,jam_masuk_standar'
       }
@@ -399,13 +543,14 @@ app.post('/api/attendance/checkout', async (req, res) => {
 });
 
 app.get('/api/attendance/history', async (req, res) => {
-  const { userId } = req.query;
+  const sessionUser = await requireSession(req, res);
+  if (!sessionUser) return;
 
   try {
     const jamMasukStandar = await getJamMasukStandar();
     const rows = await supabaseRequest('attendance', {
       query: {
-        user_id: `eq.${userId}`,
+        user_id: `eq.${sessionUser.id}`,
         select: 'id,user_id,date,check_in,check_out,distance_meters,jam_masuk_standar'
       }
     });
@@ -417,12 +562,14 @@ app.get('/api/attendance/history', async (req, res) => {
 });
 
 app.post('/api/leaves', upload.single('attachment'), async (req, res) => {
-  const { userId, type, date, reason } = req.body;
+  const sessionUser = await requireSession(req, res);
+  if (!sessionUser) return;
+  const { type, date, reason } = req.body;
 
   try {
     const profileRows = await supabaseRequest('users', {
       query: {
-        id: `eq.${userId}`,
+        id: `eq.${sessionUser.id}`,
         select: 'id'
       }
     });
@@ -433,7 +580,7 @@ app.post('/api/leaves', upload.single('attachment'), async (req, res) => {
     const insertedRows = await supabaseRequest('leaves', {
       method: 'POST',
       body: [{
-        user_id: userId,
+        user_id: sessionUser.id,
         type,
         reason,
         date,
@@ -449,12 +596,13 @@ app.post('/api/leaves', upload.single('attachment'), async (req, res) => {
 });
 
 app.get('/api/leaves', async (req, res) => {
-  const { userId } = req.query;
+  const sessionUser = await requireSession(req, res);
+  if (!sessionUser) return;
 
   try {
     const rows = await supabaseRequest('leaves', {
       query: {
-        user_id: `eq.${userId}`,
+        user_id: `eq.${sessionUser.id}`,
         select: 'id,user_id,type,reason,date,attachment,status,submitted_at'
       }
     });
@@ -466,6 +614,8 @@ app.get('/api/leaves', async (req, res) => {
 });
 
 app.get('/api/admin/monitoring', async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
   const date = req.query.date || getToday();
 
   try {
@@ -530,6 +680,8 @@ app.get('/api/admin/monitoring', async (req, res) => {
 
 
 app.get('/api/export/rekap', async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
   const { startDate, endDate } = req.query;
   if (!startDate || !endDate) {
     return res.status(400).json({ message: 'startDate dan endDate wajib diisi (format YYYY-MM-DD).' });
@@ -650,6 +802,8 @@ app.get('/api/export/rekap', async (req, res) => {
 });
 
 app.get('/api/admin/settings', async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
   try {
     const jamMasukStandar = await getJamMasukStandar();
     return res.json({ settings: { jamMasukStandar } });
@@ -659,6 +813,8 @@ app.get('/api/admin/settings', async (req, res) => {
 });
 
 app.post('/api/admin/settings', async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
   const { jamMasukStandar } = req.body;
   if (!jamMasukStandar || !/^\d{2}:\d{2}$/.test(jamMasukStandar)) {
     return res.status(400).json({ message: 'Format jamMasukStandar tidak valid. Gunakan HH:MM.' });
