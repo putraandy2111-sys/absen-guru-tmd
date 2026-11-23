@@ -41,6 +41,7 @@ loadEnvFile();
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const allowedOrigins = (process.env.CORS_ORIGINS || 'https://localhost,capacitor://localhost')
   .split(',')
   .map((origin) => origin.trim())
@@ -125,16 +126,16 @@ function getAttendanceStatus(checkIn, jamMasukStandar = '07:30') {
 
 function getSupabaseHeaders(extra = {}) {
   return {
-    apikey: SUPABASE_ANON_KEY || '',
-    Authorization: `Bearer ${SUPABASE_ANON_KEY || ''}`,
+    apikey: SUPABASE_SERVICE_ROLE_KEY || '',
+    Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY || ''}`,
     'Content-Type': 'application/json',
     ...extra
   };
 }
 
 async function supabaseRequest(path, { method = 'GET', body, query = {}, headers = {} } = {}) {
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-    const error = new Error('Konfigurasi Supabase belum lengkap.');
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    const error = new Error('Konfigurasi server Supabase belum lengkap.');
     error.statusCode = 500;
     throw error;
   }

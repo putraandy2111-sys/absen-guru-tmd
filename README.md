@@ -23,7 +23,8 @@ Aplikasi absensi guru berbasis frontend statis dengan integrasi Supabase.
 1. Buat project baru di Supabase.
 2. Jalankan SQL dari `supabase/schema.sql`.
 3. Aktifkan Auth.
-4. Isi `SUPABASE_URL` dan `SUPABASE_ANON_KEY` pada konfigurasi frontend di `script.js`.
+4. Atur `SUPABASE_URL`, `SUPABASE_ANON_KEY`, dan `SUPABASE_SERVICE_ROLE_KEY` pada environment hosting.
+   `SUPABASE_SERVICE_ROLE_KEY` hanya digunakan server dan tidak boleh dikirim ke browser.
 5. Pastikan bucket `leave-attachments` sudah dibuat dan public.
 
 ## Local run

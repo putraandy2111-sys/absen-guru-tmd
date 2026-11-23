@@ -20,6 +20,10 @@ assert.ok(server.includes('record.jamMasukStandar || jamMasukStandar'), 'Status 
 assert.ok(script.includes('item.jamMasukStandar || data.jamMasukStandar'), 'Riwayat harus memakai snapshot jam standar per record');
 assert.ok(server.includes('async function hashPassword'), 'Server harus menyediakan hash password');
 assert.ok(server.includes("Authorization`") || server.includes('authorization'), 'Server harus memvalidasi authorization session');
+assert.ok(server.includes('const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;'), 'Database backend harus memakai service role key server-side');
+assert.ok(server.includes('apikey: SUPABASE_SERVICE_ROLE_KEY || \'\''), 'Supabase request harus menggunakan service role key');
+const configEndpoint = server.match(/app\.get\('\/api\/config'[\s\S]*?\n\}\);/);
+assert.ok(configEndpoint && configEndpoint[0].includes('supabaseAnonKey') && !configEndpoint[0].includes('SERVICE_ROLE'), 'Endpoint config tidak boleh mengirim service role key ke browser');
 assert.ok(server.includes("app.post('/api/admin/users/reset-password'"), 'Server harus menyediakan reset password khusus admin');
 assert.ok(script.includes("StorageHelper.getItem('sessionToken')"), 'Frontend harus menyimpan dan memakai session token');
 assert.ok(!html.includes('guru123') && !html.includes('admin123'), 'Halaman login tidak boleh menampilkan password demo');
